@@ -70,6 +70,7 @@ smartfleet/vehicles/TRUCK-001/dtc
 - Event timestamp.
 - DTC code and status.
 - Available telemetry, such as engine RPM and vehicle speed.
+
 The diagnostic severity and likely root causes are determined during the analysis stage rather than being assumed to originate from the ECU event.
 
 ## Event Ingestion Through AWS IoT Core
@@ -82,6 +83,7 @@ The rule forwards qualifying messages to the DTC Processor Lambda function.
 3. Normalize the DTC code and status.
 4. Preserve the event identifier and timestamp.
 5. Forward the event for state management.
+
 This decouples vehicle communication from diagnostic processing. Vehicles do not need to wait for an AI analysis to finish before sending their next event.
 
 ## DTC Processing and State Management
@@ -115,6 +117,7 @@ Historical events can record:
 - Reappearance after clearance.
 - Relevant telemetry snapshots.
 - Event timestamps and identifiers.
+
 The history supports troubleshooting, auditing, trend analysis, and future maintenance insights.
 The logical keys above are illustrative; the deployed table key schema may differ.
 
@@ -142,6 +145,7 @@ The intended sequence is:
 3. EventBridge Pipes filters the stream records.
 4. A qualifying new active DTC is sent to SQS.
 5. The DTC Analyzer Lambda consumes the queued message.
+
 **Important:** DynamoDB does not directly push a message to SQS merely because an item exists. The stream and pipe provide the event-driven connection. Filtering should distinguish a new active lifecycle from ordinary updates and repeated observations.
 This approach separates operational state management from AI analysis and allows the analysis workload to scale independently.
 
@@ -153,27 +157,114 @@ The queue provides:
 - Independent scaling of diagnostic workers.
 - Retry handling for transient failures.
 - Isolation between ingestion and AI processing.
+
 The architecture uses a standard SQS queue rather than a FIFO queue.
 The DTC Analyzer Lambda should be idempotent because messages may be delivered more than once. A dead-letter queue can be configured to retain messages that repeatedly fail processing.
 
 ## DTC Analyzer Lambda
-
 The DTC Analyzer Lambda is responsible for converting a DTC event into a structured diagnostic request.
-
 Its workflow includes:
-
-Read the SQS message.
-
-Validate the vehicle and DTC details.
-
-Retrieve the relevant diagnostic context from the configured knowledge source.
-
-Build the analysis prompt using the DTC, telemetry, and retrieved evidence.
-
-Invoke the PowertrainAgent or configured Amazon Bedrock model.
-
-Validate and record the response.
-
-Send appropriate notifications when processing succeeds.
+1. Read the SQS message.
+2. Validate the vehicle and DTC details.
+3. Retrieve the relevant diagnostic context from the configured knowledge source.
+4. Build the analysis prompt using the DTC, telemetry, and retrieved evidence.
+5. Invoke the PowertrainAgent or configured Amazon Bedrock model.
+6. Validate and record the response.
+7. Send appropriate notifications when processing succeeds.
 
 The analyzer must distinguish observed telemetry from assumptions. For example, an engine RPM of 2,400 does not by itself establish that a fuel pump has failed.
+
+## Amazon Bedrock — Intelligent DTC Analysis
+
+Amazon Bedrock provides the foundation-model capability for interpreting diagnostic information.
+The SmartFleet PowertrainAgent uses Amazon Nova Lite and retrieves relevant documents from the SmartFleet Powertrain Knowledge Base through an Amazon Bedrock AgentCore Gateway MCP tool.
+
+The diagnostic context can include:
+- DTC code and status.
+- Vehicle identity and type.
+- Available telemetry.
+- Retrieved diagnostic documentation.
+- Relevant diagnostic procedures and checks.
+
+The model generates a structured analysis containing plausible causes, supporting evidence, confidence estimates, and recommended checks.
+
+The diagnostic approach should:
+- Rank potential causes rather than assert an unconfirmed failure.
+- Distinguish direct evidence from general diagnostic knowledge.
+- Request additional information when necessary.
+- Respect the specialist agent's diagnostic scope.
+- Avoid fabricating sensor readings or test results.
+
+For example, DTC P0087 indicates a fuel-rail/system pressure condition below the expected threshold. The analysis should consider multiple potential causes and recommend appropriate checks rather than automatically declaring the fuel pump defective.
+
+## Knowledge Base and MCP Integration
+The PowertrainAgent uses the SmartFleet diagnostic Knowledge Base to ground its reasoning in relevant documentation.
+The local integration contains:
+
+app/
+└── PowertrainAgent/
+    ├── main.py
+    └── mcp_kb_client.py
+
+**main.py** handles the diagnostic prompt, retrieves context through the MCP client, and passes the combined context to the Strands agent.
+**mcp_kb_client.py** calls the AgentCore Gateway retrieval tool and extracts relevant Knowledge Base documents.
+
+The diagnostic documentation includes general powertrain diagnostic procedures, fuel-pressure troubleshooting, catalyst and oxygen-sensor diagnostics, and DTC-specific guidance.
+This retrieval-based design provides a foundation for explainable, document-grounded diagnostic recommendations.
+
+## Amazon SNS — Driver and Workshop Notifications
+After diagnostic analysis, Amazon SNS can distribute relevant results to configured subscribers. 
+Potential notification destinations include:
+- Fleet managers.
+- Workshop engineers.
+- Driver notification workflows.
+- Operational email or SMS endpoints.
+
+Notifications should summarize the DTC, potential causes, supporting evidence, recommended checks, and the urgency of the next action.
+Safety-critical recommendations should be conservative and should not be based solely on an unverified model conclusion.
+The severity and notification policy should be validated before production use.
+
+## Monitoring and Operational Reliability
+The architecture can be monitored using Amazon CloudWatch.
+Useful operational metrics and logs include:
+- IoT Rule delivery failures.
+- DTC Processor Lambda errors and duration.
+- DynamoDB throttling and conditional-write failures.
+- DynamoDB Streams processing failures.
+- EventBridge Pipe execution and delivery failures.
+- SQS queue depth and message age.
+- DTC Analyzer Lambda errors and duration.
+- Bedrock invocation latency, throttling, and failures.
+- SNS delivery failures.
+
+Alarm thresholds should reflect expected vehicle event volumes and diagnostic processing objectives.
+Sensitive vehicle information should be minimized in logs, and IAM permissions should follow least-privilege principles.
+
+## Design Principles
+The architecture follows these principles:
+- Event-driven processing instead of synchronous end-to-end execution.
+- Separation of current DTC state from historical events.
+- Idempotent handling of repeated and retried messages.
+- Asynchronous AI analysis through SQS.
+- Evidence-based diagnostic reasoning through retrieval-augmented generation.
+- Independent scaling of ingestion and analysis workloads.
+- Low operational overhead for an initial fleet of approximately 100 vehicles.
+- Extensibility toward larger fleets, additional diagnostic domains, and predictive maintenance.
+
+## Future Enhancements
+Potential future capabilities include:
+- Specialist agents for Chassis, Body, and Network diagnostics.
+- Coordination and reconciliation of specialist-agent results.
+- Fleet-wide DTC trend analysis.
+- Time-series telemetry storage.
+- Vehicle health dashboards.
+- Service, battery, and oil maintenance recommendations.
+- Driver notifications that distinguish monitoring from immediate action.
+- Guardrails and stronger validation of diagnostic outputs.
+- Improved operational dashboards and automated recovery workflows.
+
+## Project Status
+The SmartFleet project is being developed incrementally.
+The current development focus includes vehicle-event simulation, DTC lifecycle management, event-driven processing, and local integration of the PowertrainAgent with the diagnostic Knowledge Base through MCP.
+Cloud deployment and broader fleet integration are planned as subsequent steps.
+The architecture is designed to evolve from an initial diagnostic workflow into a multi-domain intelligent fleet-maintenance platform.
