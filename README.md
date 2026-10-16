@@ -126,3 +126,15 @@ Historical events can record:
 
 The history supports troubleshooting, auditing, trend analysis, and future maintenance insights.
 The logical keys above are illustrative; the deployed table key schema may differ.
+
+## Duplicate Prevention and DTC Lifecycle
+A DTC can be reported repeatedly while it remains active. Every repeated message should not automatically trigger another expensive AI analysis.
+The DTC Processor applies lifecycle and deduplication rules.
+
+| Incoming event      | Current state           | Expected behavior                                                                       |
+|---------------------|-------------------------|-----------------------------------------------------------------------------------------|
+| New ACTIVE DTC      | No active record        | Create/update current state and record history                                          |
+| Repeated ACTIVE DTC | Already active          | Update observation details and retain history as required; avoid unnecessary reanalysis |
+| CLEAR event         | Active record exists    | Mark the DTC cleared and record the transition                                          |
+| ACTIVE after CLEAR  | Previously cleared      | Start a new active lifecycle and allow analysis again                                   |
+| Duplicate event ID  | Event already processed | Avoid processing the same event twice                                                   |
