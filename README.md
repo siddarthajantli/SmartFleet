@@ -1,6 +1,6 @@
 # SmartFleet
 ## Project Overview
-SmartFleet AI is an intelligent vehicle diagnostics platform designed to help fleet owners, drivers, and workshop engineers identify vehicle Diagnostic Trouble Codes (DTCs), understand potential root causes, and take appropriate corrective action.
+SmartFleet is an intelligent vehicle diagnostics platform designed to help fleet owners, drivers, and workshop engineers identify vehicle Diagnostic Trouble Codes (DTCs), understand potential root causes, and take appropriate corrective action.
 
 The solution combines AWS IoT Core, Amazon DynamoDB, Amazon SQS, AWS Lambda, Amazon Bedrock, and Amazon SNS to build an event-driven diagnostic workflow.
 
@@ -88,3 +88,41 @@ The rule forwards qualifying messages to the DTC Processor Lambda function.
 5. Forward the event for state management.
 
 This decouples vehicle communication from diagnostic processing. Vehicles do not need to wait for an AI analysis to finish before sending their next event.
+
+## DTC Processing and State Management
+The DTC Processor Lambda function determines how the incoming event affects the vehicle's DTC state.
+The system maintains two logical categories of DTC data.
+1. Current DTCs
+2. Historical DTCs
+
+### Current DTCs
+The current DTC store represents the latest known state of each DTC for a vehicle.
+Example logical key:
+
+PK (Partition Key) = VEHICLE#TRUCK-001
+SK (Sort Key)= DTC#P0087
+
+The current record can contain the DTC status, first-seen timestamp, last-seen timestamp, most recent event identifier, and other relevant fields.
+Its purpose is to answer:
+- Which DTCs are currently active?
+- When was a DTC first detected?
+- When was it last observed?
+- Has the DTC been cleared?
+- Does this event represent a new diagnostic-analysis opportunity?
+
+### Historical DTCs
+The historical store retains individual DTC lifecycle events and state transitions.
+Example logical key:
+PK = VEHICLE#TRUCK-001#DTC#P0087
+SK = EVENT#2026-10-16T09:00:00Z#evt-20261016-0001
+
+Historical events can record:
+- DTC activation.
+- Repeated observations.
+- DTC clearance.
+- Reappearance after clearance.
+- Relevant telemetry snapshots.
+- Event timestamps and identifiers.
+
+The history supports troubleshooting, auditing, trend analysis, and future maintenance insights.
+The logical keys above are illustrative; the deployed table key schema may differ.
