@@ -1,5 +1,5 @@
 # SmartFleet
-
+## Project Overview
 SmartFleet AI is an intelligent vehicle diagnostics platform designed to help fleet owners, drivers, and workshop engineers identify vehicle Diagnostic Trouble Codes (DTCs), understand potential root causes, and take appropriate corrective action.
 
 The solution combines AWS IoT Core, Amazon DynamoDB, Amazon SQS, AWS Lambda, Amazon Bedrock, and Amazon SNS to build an event-driven diagnostic workflow.
@@ -37,4 +37,51 @@ The primary objectives are to:
     M --> N[Driver Notifications]
     M --> O[Fleet / Workshop Notifications]
 
-** Architecture note: ** The diagram represents the intended event-driven flow. DynamoDB Streams and EventBridge Pipes are used to propagate qualifying DTC state changes to the SQS analysis queue. The processor and stream-filtering logic determine which changes qualify for analysis.
+**Architecture note:** The diagram represents the intended event-driven flow. DynamoDB Streams and EventBridge Pipes are used to propagate qualifying DTC state changes to the SQS analysis queue. The processor and stream-filtering logic determine which changes qualify for analysis.
+
+## Vehicle Data Collection
+The first stage collects diagnostic events and telemetry from the vehicle ECU / a vehicle simulator.
+
+AWS IoT Core provides the secure MQTT-based ingestion layer. Each vehicle is provisioned with its own device certificate and publishes messages to its assigned MQTT topic.
+
+### Example topic (IoT Core Topic):
+smartfleet/vehicles/TRUCK-001/dtc
+### Example DTC event (Subject to change):
+{
+  "vehicleId": "TRUCK-001",
+  "vehicleType": "TRUCK",
+  "vinNumber": "TEST_VIN",
+  "eventId": "evt-20261016-0001",
+  "timestamp": "2026-10-16T09:00:00Z",
+  "dtc": {
+    "code": "P0087",
+    "status": "ACTIVE"
+  },
+  "telemetry": {
+    "rpm": 2400,
+    "speed": 65
+  }
+}
+
+## The collected information includes:
+- Vehicle identity and type.
+- Vehicle identification number (VIN).
+- Unique event identifier.
+- Event timestamp.
+- DTC code and status.
+- Available telemetry, such as engine RPM and vehicle speed.
+
+The diagnostic severity and likely root causes are determined during the analysis stage rather than being assumed to originate from the ECU event.
+
+## Event Ingestion Through AWS IoT Core
+AWS IoT Core receives the MQTT message and evaluates it against an IoT Rule.
+The rule forwards qualifying messages to the DTC Processor Lambda function.
+
+### Responsibilities of the ingestion layer include:
+1. Receive the vehicle event.
+2. Validate required fields.
+3. Normalize the DTC code and status.
+4. Preserve the event identifier and timestamp.
+5. Forward the event for state management.
+
+This decouples vehicle communication from diagnostic processing. Vehicles do not need to wait for an AI analysis to finish before sending their next event.
