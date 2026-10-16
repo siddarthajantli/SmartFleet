@@ -5,7 +5,6 @@ SmartFleet is an intelligent vehicle diagnostics platform designed to help fleet
 The solution combines AWS IoT Core, Amazon DynamoDB, Amazon SQS, AWS Lambda, Amazon Bedrock, and Amazon SNS to build an event-driven diagnostic workflow.
 
 The platform is designed for commercial vehicles such as trucks, intercity buses, transport buses, and mini-passenger vans.
-
 The primary objectives are to:
 - Collect vehicle telemetry and ECU diagnostic events.
 - Maintain separate current and historical DTC records.
@@ -41,7 +40,6 @@ The primary objectives are to:
 
 ## Vehicle Data Collection
 The first stage collects diagnostic events and telemetry from the vehicle ECU / a vehicle simulator.
-
 AWS IoT Core provides the secure MQTT-based ingestion layer. Each vehicle is provisioned with its own device certificate and publishes messages to its assigned MQTT topic.
 
 ### Example topic (IoT Core Topic):
@@ -65,7 +63,6 @@ smartfleet/vehicles/TRUCK-001/dtc
   }
 }
 ~~~
-
 ## The collected information includes:
 - Vehicle identity and type.
 - Vehicle identification number (VIN).
@@ -73,7 +70,6 @@ smartfleet/vehicles/TRUCK-001/dtc
 - Event timestamp.
 - DTC code and status.
 - Available telemetry, such as engine RPM and vehicle speed.
-
 The diagnostic severity and likely root causes are determined during the analysis stage rather than being assumed to originate from the ECU event.
 
 ## Event Ingestion Through AWS IoT Core
@@ -86,7 +82,6 @@ The rule forwards qualifying messages to the DTC Processor Lambda function.
 3. Normalize the DTC code and status.
 4. Preserve the event identifier and timestamp.
 5. Forward the event for state management.
-
 This decouples vehicle communication from diagnostic processing. Vehicles do not need to wait for an AI analysis to finish before sending their next event.
 
 ## DTC Processing and State Management
@@ -98,10 +93,8 @@ The system maintains two logical categories of DTC data.
 ### Current DTCs
 The current DTC store represents the latest known state of each DTC for a vehicle.
 Example logical key:
-
 PK (Partition Key) = VEHICLE#TRUCK-001
 SK (Sort Key)= DTC#P0087
-
 The current record can contain the DTC status, first-seen timestamp, last-seen timestamp, most recent event identifier, and other relevant fields.
 Its purpose is to answer:
 - Which DTCs are currently active?
@@ -115,7 +108,6 @@ The historical store retains individual DTC lifecycle events and state transitio
 Example logical key:
 PK = VEHICLE#TRUCK-001#DTC#P0087
 SK = EVENT#2026-10-16T09:00:00Z#evt-20261016-0001
-
 Historical events can record:
 - DTC activation.
 - Repeated observations.
@@ -123,7 +115,6 @@ Historical events can record:
 - Reappearance after clearance.
 - Relevant telemetry snapshots.
 - Event timestamps and identifiers.
-
 The history supports troubleshooting, auditing, trend analysis, and future maintenance insights.
 The logical keys above are illustrative; the deployed table key schema may differ.
 
@@ -138,3 +129,51 @@ The DTC Processor applies lifecycle and deduplication rules.
 | CLEAR event         | Active record exists    | Mark the DTC cleared and record the transition                                          |
 | ACTIVE after CLEAR  | Previously cleared      | Start a new active lifecycle and allow analysis again                                   |
 | Duplicate event ID  | Event already processed | Avoid processing the same event twice                                                   |
+
+These rules distinguish an active fault from a new diagnostic event.
+The implementation should use conditional writes, idempotency controls, and appropriate state-transition logic to prevent concurrent or retried events from creating duplicate analysis requests.
+
+## Event-Driven Diagnostic Trigger
+Once DynamoDB reflects a qualifying new active DTC, the system uses DynamoDB Streams to detect the change.
+An EventBridge Pipe filters stream records and forwards only qualifying events to the Amazon SQS DTC Analysis queue.
+The intended sequence is:
+1. The DTC Processor writes the current DTC state to DynamoDB.
+2. DynamoDB Streams captures the database change.
+3. EventBridge Pipes filters the stream records.
+4. A qualifying new active DTC is sent to SQS.
+5. The DTC Analyzer Lambda consumes the queued message.
+**Important:** DynamoDB does not directly push a message to SQS merely because an item exists. The stream and pipe provide the event-driven connection. Filtering should distinguish a new active lifecycle from ordinary updates and repeated observations.
+This approach separates operational state management from AI analysis and allows the analysis workload to scale independently.
+
+## Amazon SQS — Diagnostic Work Queue
+Amazon SQS buffers DTC analysis requests between the event-processing layer and the diagnostic worker.
+The queue provides:
+- Asynchronous processing.
+- Buffering during traffic spikes.
+- Independent scaling of diagnostic workers.
+- Retry handling for transient failures.
+- Isolation between ingestion and AI processing.
+The architecture uses a standard SQS queue rather than a FIFO queue.
+The DTC Analyzer Lambda should be idempotent because messages may be delivered more than once. A dead-letter queue can be configured to retain messages that repeatedly fail processing.
+
+## DTC Analyzer Lambda
+
+The DTC Analyzer Lambda is responsible for converting a DTC event into a structured diagnostic request.
+
+Its workflow includes:
+
+Read the SQS message.
+
+Validate the vehicle and DTC details.
+
+Retrieve the relevant diagnostic context from the configured knowledge source.
+
+Build the analysis prompt using the DTC, telemetry, and retrieved evidence.
+
+Invoke the PowertrainAgent or configured Amazon Bedrock model.
+
+Validate and record the response.
+
+Send appropriate notifications when processing succeeds.
+
+The analyzer must distinguish observed telemetry from assumptions. For example, an engine RPM of 2,400 does not by itself establish that a fuel pump has failed.
