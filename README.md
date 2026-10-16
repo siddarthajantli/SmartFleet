@@ -47,6 +47,8 @@ AWS IoT Core provides the secure MQTT-based ingestion layer. Each vehicle is pro
 ### Example topic (IoT Core Topic):
 smartfleet/vehicles/TRUCK-001/dtc
 ### Example DTC event (Subject to change):
+
+~~~ json
 {
   "vehicleId": "TRUCK-001",
   "vehicleType": "TRUCK",
@@ -62,6 +64,7 @@ smartfleet/vehicles/TRUCK-001/dtc
     "speed": 65
   }
 }
+~~~
 
 ## The collected information includes:
 - Vehicle identity and type.
